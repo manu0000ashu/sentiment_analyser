@@ -116,8 +116,6 @@ def main():
     # Initialize session state
     if 'chat_history' not in st.session_state:
         st.session_state.chat_history = []
-    if 'user_input' not in st.session_state:
-        st.session_state.user_input = ""
     
     assistant = EmotionalSupportAssistant()
     
@@ -125,17 +123,16 @@ def main():
     col1, col2 = st.columns([2, 1])
     
     with col1:
-        # Text input area
+        # Text input area with a unique key
         user_input = st.text_area(
             "How are you feeling today?",
-            value=st.session_state.user_input,
-            height=100,
-            key="user_input_area"
+            key="user_input_area",
+            height=100
         )
         
         # Send button
         if st.button("Send", key="send_button"):
-            if user_input:
+            if user_input.strip():  # Check if input is not just whitespace
                 # Analyze sentiment and emotion
                 sentiment = assistant.analyze_sentiment(user_input)
                 emotion = assistant.analyze_emotion(user_input)
@@ -147,26 +144,7 @@ def main():
                 st.session_state.chat_history.append(("user", user_input))
                 st.session_state.chat_history.append(("assistant", response))
                 
-                # Clear the input
-                st.session_state.user_input = ""
-                
-                # Force a rerun to update the UI
-                st.experimental_rerun()
-    
-    # Display chat history and analysis in a container
-    chat_container = st.container()
-    
-    with chat_container:
-        # Display the most recent interaction first
-        if st.session_state.chat_history:
-            latest_interaction = st.session_state.chat_history[-2:]  # Get the last user-assistant pair
-            
-            # Display latest analysis
-            if len(latest_interaction) == 2:
-                user_message = latest_interaction[0][1]
-                sentiment = assistant.analyze_sentiment(user_message)
-                emotion = assistant.analyze_emotion(user_message)
-                
+                # Display analysis
                 st.write("---")
                 st.subheader("Analysis")
                 st.write(f"**Sentiment:** {sentiment['label']} (Confidence: {sentiment['score']:.2f})")
@@ -178,15 +156,15 @@ def main():
                     st.subheader("Let me help you feel better:")
                     st.info(assistant.suggest_activity())
                     st.success(f"Here's a joke to lighten the mood: {assistant.tell_joke()}")
-        
-        # Display chat history
-        with col2:
-            st.subheader("Chat History")
-            for role, message in st.session_state.chat_history:
-                if role == "user":
-                    st.markdown(f"**You:** {message}")
-                else:
-                    st.markdown(f"**Assistant:** {message}")
+    
+    # Display chat history
+    with col2:
+        st.subheader("Chat History")
+        for role, message in st.session_state.chat_history:
+            if role == "user":
+                st.markdown(f"**You:** {message}")
+            else:
+                st.markdown(f"**Assistant:** {message}")
 
 if __name__ == "__main__":
     main()

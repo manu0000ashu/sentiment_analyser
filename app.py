@@ -13,8 +13,7 @@ from nltk.probability import FreqDist
 from collections import defaultdict
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-from transformers import pipeline, AutoModelForSequenceClassification, AutoTokenizer
-from sentence_transformers import SentenceTransformer
+from transformers import pipeline
 import torch
 import spacy
 from rasa.nlu.model import Interpreter
@@ -144,9 +143,11 @@ def add_bg_from_url():
 class AdvancedNLPProcessor:
     def __init__(self):
         # Initialize transformers
-        self.sentiment_analyzer = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
-        self.emotion_classifier = pipeline("text-classification", model="j-hartmann/emotion-english-distilroberta-base")
-        self.sentence_model = SentenceTransformer('all-MiniLM-L6-v2')
+        try:
+            self.sentiment_analyzer = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
+        except:
+            st.warning("Transformer models not loaded. Using fallback methods.")
+            self.sentiment_analyzer = None
         
         # Intent recognition patterns
         self.intents = {
@@ -195,22 +196,32 @@ class AdvancedNLPProcessor:
         return {'intent': 'general', 'confidence': 1.0, 'key_phrases': key_phrases}
 
     def analyze_sentiment(self, text):
-        # Combine multiple sentiment analysis approaches
         try:
-            # Transformer-based sentiment
-            transformer_sentiment = self.sentiment_analyzer(text)[0]
-            
-            # TextBlob sentiment
-            blob = TextBlob(text)
-            textblob_polarity = blob.sentiment.polarity
-            
-            # Combine scores
-            if transformer_sentiment['label'] == 'POSITIVE':
-                combined_score = (transformer_sentiment['score'] + max(textblob_polarity, 0)) / 2
-                label = "POSITIVE"
+            if self.sentiment_analyzer:
+                # Transformer-based sentiment
+                transformer_sentiment = self.sentiment_analyzer(text)[0]
+                
+                # TextBlob sentiment
+                blob = TextBlob(text)
+                textblob_polarity = blob.sentiment.polarity
+                
+                # Combine scores
+                if transformer_sentiment['label'] == 'POSITIVE':
+                    combined_score = (transformer_sentiment['score'] + max(textblob_polarity, 0)) / 2
+                    label = "POSITIVE"
+                else:
+                    combined_score = (transformer_sentiment['score'] + max(-textblob_polarity, 0)) / 2
+                    label = "NEGATIVE"
             else:
-                combined_score = (transformer_sentiment['score'] + max(-textblob_polarity, 0)) / 2
-                label = "NEGATIVE"
+                # Fallback to TextBlob only
+                blob = TextBlob(text)
+                textblob_polarity = blob.sentiment.polarity
+                if textblob_polarity > 0:
+                    label = "POSITIVE"
+                    combined_score = textblob_polarity
+                else:
+                    label = "NEGATIVE"
+                    combined_score = -textblob_polarity
                 
             return {
                 'label': label,
@@ -221,23 +232,39 @@ class AdvancedNLPProcessor:
             return {"label": "NEUTRAL", "score": 0.5, "subjectivity": 0.5}
 
     def analyze_emotion(self, text):
-        try:
-            # Get emotion classification from transformer
-            emotion_result = self.emotion_classifier(text)[0]
-            
+        # Emotion keywords for classification
+        emotion_keywords = {
+            'joy': ['happy', 'excited', 'delighted', 'wonderful', 'great', 'awesome', 'fantastic'],
+            'sadness': ['sad', 'unhappy', 'depressed', 'down', 'miserable', 'hurt', 'disappointed'],
+            'anger': ['angry', 'mad', 'furious', 'irritated', 'annoyed', 'frustrated'],
+            'fear': ['scared', 'afraid', 'worried', 'anxious', 'nervous', 'terrified'],
+            'love': ['love', 'loving', 'loved', 'care', 'caring', 'affection'],
+            'surprise': ['surprised', 'shocked', 'amazed', 'unexpected', 'astonished']
+        }
+        
+        # Tokenize and analyze
+        tokens = word_tokenize(text.lower())
+        emotion_scores = defaultdict(float)
+        
+        for token in tokens:
+            for emotion, keywords in emotion_keywords.items():
+                if token in keywords:
+                    emotion_scores[emotion] += 1
+        
+        # Get the dominant emotion
+        if emotion_scores:
+            dominant_emotion = max(emotion_scores.items(), key=lambda x: x[1])
             return {
-                'label': emotion_result['label'],
-                'score': emotion_result['score'],
+                'label': dominant_emotion[0],
+                'score': dominant_emotion[1],
                 'detailed_analysis': self.get_emotional_aspects(text)
             }
-        except Exception as e:
-            return {"label": "neutral", "score": 1.0}
+        return {"label": "neutral", "score": 1.0}
 
     def get_emotional_aspects(self, text):
         doc = nlp(text)
         aspects = {
             'intensity': self._get_intensity(doc),
-            'key_emotions': self._extract_emotion_words(doc),
             'temporal_context': self._get_temporal_context(doc),
             'certainty': self._assess_certainty(doc)
         }
@@ -246,13 +273,6 @@ class AdvancedNLPProcessor:
     def _get_intensity(self, doc):
         intensity_markers = ['very', 'really', 'extremely', 'so', 'totally', 'absolutely']
         return sum(1 for token in doc if token.text.lower() in intensity_markers)
-
-    def _extract_emotion_words(self, doc):
-        emotion_words = []
-        for token in doc:
-            if token.pos_ in ['ADJ', 'VERB'] and token.text.lower() in self.emotion_classifier.model.config.id2label.values():
-                emotion_words.append(token.text)
-        return emotion_words
 
     def _get_temporal_context(self, doc):
         temporal_markers = {
@@ -284,7 +304,7 @@ class AdvancedNLPProcessor:
 class EmotionalResponseGenerator:
     def __init__(self):
         self.nlp_processor = AdvancedNLPProcessor()
-        self.sentence_model = SentenceTransformer('all-MiniLM-L6-v2')
+        self.vectorizer = TfidfVectorizer(ngram_range=(1, 3))
         
         # Load response templates
         self.response_templates = {
@@ -315,19 +335,8 @@ class EmotionalResponseGenerator:
                 {"text": "I'm glad you're experiencing such positive emotions! What's contributed to this happiness?", "context": "general"}
             ]
         }
-        
-        # Create embeddings for all responses
-        self.response_embeddings = {}
-        for emotion, responses in self.response_templates.items():
-            self.response_embeddings[emotion] = {
-                'texts': [r['text'] for r in responses],
-                'embeddings': self.sentence_model.encode([r['text'] for r in responses])
-            }
 
     def get_best_response(self, text, analysis):
-        # Get text embedding
-        text_embedding = self.sentence_model.encode([text])[0]
-        
         # Get emotion and intent
         emotion = analysis['emotion']['label']
         intent = analysis['intent']['intent']
@@ -337,18 +346,18 @@ class EmotionalResponseGenerator:
         
         if not relevant_responses:
             return "I'm here to listen and support you. Would you like to tell me more?"
+
+        # Use TF-IDF for response selection
+        response_texts = [r['text'] for r in relevant_responses]
+        response_texts.append(text)
         
-        # Get embeddings for relevant responses
-        response_embeddings = self.response_embeddings[emotion]['embeddings']
-        response_texts = self.response_embeddings[emotion]['texts']
-        
-        # Calculate similarities
-        similarities = cosine_similarity([text_embedding], response_embeddings)[0]
+        # Calculate TF-IDF similarities
+        tfidf_matrix = self.vectorizer.fit_transform(response_texts)
+        similarities = cosine_similarity(tfidf_matrix[-1:], tfidf_matrix[:-1])[0]
         
         # Get the most similar response
         best_response_idx = similarities.argmax()
-        
-        return response_texts[best_response_idx]
+        return relevant_responses[best_response_idx]['text']
 
 class EmotionalSupportAssistant:
     def __init__(self):
@@ -480,7 +489,6 @@ def main():
                     st.write("**Emotional Analysis Details:**")
                     details = emotion['detailed_analysis']
                     st.write(f"- Emotional Intensity: {details['intensity']}")
-                    st.write(f"- Key Emotion Words: {', '.join(details['key_emotions']) if details['key_emotions'] else 'None detected'}")
                     st.write(f"- Temporal Context: {details['temporal_context']}")
                     st.write(f"- Certainty Levels: {details['certainty']}")
                 

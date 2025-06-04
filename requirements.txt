@@ -1,7 +1,9 @@
-streamlit
-textblob
-nltk
-pyjokes
-emoji
-numpy
-pandas 
+streamlit>=1.24.0
+textblob>=0.17.1
+nltk>=3.8.1
+emoji>=2.2.0
+numpy>=1.24.3
+scikit-learn>=1.2.2
+transformers>=4.30.2
+torch>=2.0.1
+spacy>=3.5.3 

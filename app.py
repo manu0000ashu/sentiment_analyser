@@ -280,7 +280,7 @@ def main():
                 
                 # Increment the input key to clear the input field
                 st.session_state.input_key += 1
-                st.experimental_rerun()
+                st.rerun()
         
         # Add a hint about continuing the conversation
         st.markdown("""

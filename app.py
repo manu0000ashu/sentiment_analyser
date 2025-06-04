@@ -124,28 +124,52 @@ def add_bg_from_url():
 class EmotionalSupportAssistant:
     def __init__(self):
         self.activities = [
-            "Take a short walk outside",
-            "Practice deep breathing for 5 minutes",
-            "Listen to your favorite uplifting song",
-            "Write down three things you're grateful for",
-            "Do some light stretching exercises",
-            "Call a friend or family member",
-            "Draw or doodle something fun",
-            "Read a few pages of an inspiring book",
-            "Try a simple meditation exercise",
-            "Make yourself a warm, comforting drink"
+            "Take a gentle walk in nature to clear your mind",
+            "Listen to some soothing music that doesn't remind you of them",
+            "Write down your feelings in a private journal",
+            "Practice self-care with a warm bath or shower",
+            "Try some deep breathing exercises for 5 minutes",
+            "Call a close friend who's good at listening",
+            "Make yourself your favorite comfort drink",
+            "Watch a funny movie or show to lift your spirits",
+            "Do some light exercise to boost endorphins",
+            "Create art or express yourself creatively"
         ]
         
-        # Define emotion keywords
+        # Enhanced emotion keywords with more nuanced emotions
         self.emotion_keywords = {
-            'joy': ['happy', 'excited', 'delighted', 'wonderful', 'great', 'awesome', 'fantastic'],
-            'sadness': ['sad', 'unhappy', 'depressed', 'down', 'miserable', 'hurt', 'disappointed'],
-            'anger': ['angry', 'mad', 'furious', 'irritated', 'annoyed', 'frustrated'],
-            'fear': ['scared', 'afraid', 'worried', 'anxious', 'nervous', 'terrified'],
-            'love': ['love', 'loving', 'loved', 'care', 'caring', 'affection'],
+            'joy': ['happy', 'excited', 'delighted', 'wonderful', 'great', 'awesome', 'fantastic', 'blessed', 'grateful'],
+            'sadness': ['sad', 'unhappy', 'depressed', 'down', 'miserable', 'hurt', 'disappointed', 'heartbroken', 'lonely', 'breakup', 'broke up'],
+            'anger': ['angry', 'mad', 'furious', 'irritated', 'annoyed', 'frustrated', 'upset', 'hate'],
+            'fear': ['scared', 'afraid', 'worried', 'anxious', 'nervous', 'terrified', 'uncertain', 'insecure'],
+            'love': ['love', 'loving', 'loved', 'care', 'caring', 'affection', 'miss', 'relationship'],
             'surprise': ['surprised', 'shocked', 'amazed', 'unexpected', 'astonished'],
+            'confusion': ['confused', 'unsure', 'dont know', "don't know", 'lost', 'wondering'],
+            'heartbreak': ['breakup', 'broke up', 'ex', 'relationship ended', 'heartbroken', 'dumped']
         }
-        
+
+        # Context-aware response templates
+        self.response_templates = {
+            'heartbreak': [
+                "I'm so sorry you're going through a breakup. It's one of the most painful experiences, and your feelings are completely valid. Would you like to talk more about what you're feeling?",
+                "Breakups can leave us feeling lost and hurt. Remember that healing takes time, and it's okay to not be okay right now. What's the hardest part for you?",
+                "I hear how much pain you're in. Heartbreak is really tough, and you're brave for acknowledging these feelings. Would you like to share more about what happened?",
+                "It's completely normal to feel down after a breakup. Your feelings matter, and this pain won't last forever. What do you need most right now - someone to listen, or maybe some suggestions for coping?"
+            ],
+            'sadness': [
+                "I can hear the sadness in your words, and I want you to know that it's okay to feel this way. Would you like to tell me more about what's making you feel down?",
+                "When we're feeling down, sometimes it helps to talk about it. I'm here to listen without judgment. What's weighing on your mind?",
+                "I'm sorry you're feeling sad. Your feelings are valid, and you don't have to go through this alone. Would you like to explore what's causing these feelings?",
+                "It takes courage to acknowledge when we're feeling down. I'm here to support you. What do you think triggered these feelings?"
+            ],
+            'confusion': [
+                "It's okay to feel uncertain or lost sometimes. Would you like to try talking through what's on your mind? Sometimes that can help bring clarity.",
+                "When we're not sure about our feelings, it can be overwhelming. Let's take it one step at time. What's the strongest emotion you're experiencing right now?",
+                "Sometimes we need time to process our emotions, and that's perfectly normal. Would you like to explore these feelings together?",
+                "It's natural to feel confused when processing difficult emotions. I'm here to listen and help you sort through your thoughts. What's the most pressing thing on your mind?"
+            ]
+        }
+
     def analyze_sentiment(self, text):
         try:
             blob = TextBlob(text)
@@ -180,26 +204,53 @@ class EmotionalSupportAssistant:
         except Exception as e:
             return {"label": "neutral", "score": 1.0}
     
-    def get_response(self, emotion):
+    def get_response(self, emotion_analysis):
+        # Get the detected emotion
+        emotion = emotion_analysis['label'].lower()
+        
+        # Check for specific keywords in the last message
+        last_message = st.session_state.chat_history[-1][1] if st.session_state.chat_history else ""
+        last_message = last_message.lower()
+        
+        # Check for context-specific situations
+        if any(word in last_message for word in ['breakup', 'broke up', 'ex', 'relationship ended']):
+            return random.choice(self.response_templates['heartbreak'])
+        elif emotion == 'sadness' or 'sad' in last_message or 'down' in last_message:
+            return random.choice(self.response_templates['sadness'])
+        elif 'dont know' in last_message.replace("'", "") or 'confused' in last_message or 'unsure' in last_message:
+            return random.choice(self.response_templates['confusion'])
+        
+        # Default responses based on emotion
         responses = {
-            'joy': "I'm happy to see you're feeling good! Tell me more about what's making you happy!",
-            'sadness': "I understand you're feeling down. Would you like to talk more about what's troubling you?",
-            'anger': "I can sense that you're frustrated. What happened to make you feel this way?",
-            'fear': "It's natural to feel afraid sometimes. Can you share what's causing your concern?",
-            'love': "That's wonderful! I'd love to hear more about what's bringing love into your life!",
-            'surprise': "Life is full of surprises! What's the unexpected thing that happened?",
-            'neutral': "I'd love to hear more about that. What else is on your mind?"
+            'joy': "I'm glad you're feeling positive! What's bringing this happiness into your life?",
+            'sadness': "I hear the sadness in your words. Would you like to talk about what's troubling you?",
+            'anger': "I can sense your frustration. What happened to make you feel this way?",
+            'fear': "It's okay to feel anxious or worried. Would you like to share what's causing these feelings?",
+            'love': "Love is such a powerful emotion. Would you like to tell me more about these feelings?",
+            'surprise': "Unexpected things can really impact us. How are you processing this surprise?",
+            'neutral': "I'm here to listen. What's on your mind right now?"
         }
-        return responses.get(emotion['label'].lower(), "Please tell me more about how you're feeling.")
+        return responses.get(emotion, "I'm here to listen and support you. Would you like to tell me more?")
     
     def suggest_activity(self):
         return random.choice(self.activities)
     
     def tell_joke(self):
         try:
-            return pyjokes.get_joke()
+            # Get a joke that's appropriate for someone feeling down
+            jokes = [
+                "What did the grape say when it got stepped on? Nothing, it just let out a little wine!",
+                "Why don't scientists trust atoms? Because they make up everything!",
+                "What do you call a bear with no teeth? A gummy bear!",
+                "Why did the cookie go to the doctor? Because it was feeling crumbly!",
+                "What do you call a fake noodle? An impasta!",
+                "Why did the scarecrow win an award? Because he was outstanding in his field!",
+                "What do you call a snowman with a six-pack? An abdominal snowman!",
+                "Why did the math book look so sad? Because it had too many problems!"
+            ]
+            return random.choice(jokes)
         except:
-            return "Why did the AI cross the road? To get to the other dataset! 😄"
+            return "Why did the cookie go to the doctor? Because it was feeling crumbly! 🍪"
 
 def main():
     st.set_page_config(

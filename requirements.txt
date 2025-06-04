@@ -1,0 +1,11 @@
+transformers
+torch
+numpy
+pandas
+nltk
+textblob
+python-dotenv
+streamlit
+pyjokes
+emoji
+scikit-learn 

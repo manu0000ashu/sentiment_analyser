@@ -20,23 +20,8 @@ else:
 try:
     nltk.download('punkt', quiet=True)
     nltk.download('averaged_perceptron_tagger', quiet=True)
-    nltk.download('vader_lexicon', quiet=True)
 except Exception as e:
     st.warning("NLTK data download failed. Some features might be limited.")
-
-# Initialize transformers with error handling
-try:
-    from transformers import pipeline
-    sentiment_analyzer = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
-    emotion_classifier = pipeline(
-        "text-classification",
-        model="j-hartmann/emotion-english-distilroberta-base",
-        return_all_scores=True
-    )
-except Exception as e:
-    st.error("Error loading AI models. Please try again later.")
-    sentiment_analyzer = None
-    emotion_classifier = None
 
 class EmotionalSupportAssistant:
     def __init__(self):
@@ -53,28 +38,47 @@ class EmotionalSupportAssistant:
             "Make yourself a warm, comforting drink"
         ]
         
+        # Define emotion keywords
+        self.emotion_keywords = {
+            'joy': ['happy', 'excited', 'delighted', 'wonderful', 'great', 'awesome', 'fantastic'],
+            'sadness': ['sad', 'unhappy', 'depressed', 'down', 'miserable', 'hurt', 'disappointed'],
+            'anger': ['angry', 'mad', 'furious', 'irritated', 'annoyed', 'frustrated'],
+            'fear': ['scared', 'afraid', 'worried', 'anxious', 'nervous', 'terrified'],
+            'love': ['love', 'loving', 'loved', 'care', 'caring', 'affection'],
+            'surprise': ['surprised', 'shocked', 'amazed', 'unexpected', 'astonished'],
+        }
+        
     def analyze_sentiment(self, text):
         try:
-            if sentiment_analyzer:
-                result = sentiment_analyzer(text)[0]
-                return result
+            blob = TextBlob(text)
+            polarity = blob.sentiment.polarity
+            if polarity > 0.3:
+                label = "POSITIVE"
+            elif polarity < -0.3:
+                label = "NEGATIVE"
             else:
-                # Fallback to TextBlob if transformer model fails
-                blob = TextBlob(text)
-                polarity = blob.sentiment.polarity
-                return {"label": "POSITIVE" if polarity > 0 else "NEGATIVE", "score": abs(polarity)}
+                label = "NEUTRAL"
+            return {"label": label, "score": abs(polarity)}
         except Exception as e:
             return {"label": "NEUTRAL", "score": 0.5}
     
     def analyze_emotion(self, text):
         try:
-            if emotion_classifier:
-                emotions = emotion_classifier(text)[0]
-                emotions_sorted = sorted(emotions, key=lambda x: x['score'], reverse=True)
-                return emotions_sorted[0]
-            else:
-                # Simple fallback emotion detection
+            text = text.lower()
+            words = word_tokenize(text)
+            
+            # Count emotion keywords
+            emotion_scores = {emotion: 0 for emotion in self.emotion_keywords}
+            for word in words:
+                for emotion, keywords in self.emotion_keywords.items():
+                    if word in keywords:
+                        emotion_scores[emotion] += 1
+            
+            # Get the dominant emotion
+            max_emotion = max(emotion_scores.items(), key=lambda x: x[1])
+            if max_emotion[1] == 0:
                 return {"label": "neutral", "score": 1.0}
+            return {"label": max_emotion[0], "score": 1.0}
         except Exception as e:
             return {"label": "neutral", "score": 1.0}
     

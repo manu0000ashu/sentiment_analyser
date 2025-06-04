@@ -13,6 +13,12 @@ from nltk.probability import FreqDist
 from collections import defaultdict
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+from transformers import pipeline, AutoModelForSequenceClassification, AutoTokenizer
+from sentence_transformers import SentenceTransformer
+import torch
+import spacy
+from rasa.nlu.model import Interpreter
+import os
 
 # Handle SSL certificate verification for NLTK downloads
 try:
@@ -27,8 +33,16 @@ try:
     nltk.download('punkt', quiet=True)
     nltk.download('averaged_perceptron_tagger', quiet=True)
     nltk.download('stopwords', quiet=True)
+    nltk.download('vader_lexicon', quiet=True)
 except Exception as e:
     st.warning("NLTK data download failed. Some features might be limited.")
+
+# Load SpaCy model
+try:
+    nlp = spacy.load('en_core_web_sm')
+except:
+    os.system('python -m spacy download en_core_web_sm')
+    nlp = spacy.load('en_core_web_sm')
 
 def add_bg_from_url():
     st.markdown("""
@@ -127,111 +141,218 @@ def add_bg_from_url():
     </style>
     """, unsafe_allow_html=True)
 
+class AdvancedNLPProcessor:
+    def __init__(self):
+        # Initialize transformers
+        self.sentiment_analyzer = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
+        self.emotion_classifier = pipeline("text-classification", model="j-hartmann/emotion-english-distilroberta-base")
+        self.sentence_model = SentenceTransformer('all-MiniLM-L6-v2')
+        
+        # Intent recognition patterns
+        self.intents = {
+            'greeting': ['hello', 'hi', 'hey', 'good morning', 'good evening', 'good afternoon'],
+            'farewell': ['bye', 'goodbye', 'see you', 'talk to you later', 'have to go'],
+            'gratitude': ['thank you', 'thanks', 'appreciate it', 'grateful'],
+            'help_request': ['help', 'need advice', 'what should i do', 'can you help'],
+            'sharing_emotion': ['feel', 'feeling', 'felt', 'am sad', 'am happy', 'am angry'],
+            'question': ['why', 'what', 'how', 'when', 'where', 'who']
+        }
+
+    def analyze_intent(self, text):
+        # Use SpaCy for advanced text processing
+        doc = nlp(text.lower())
+        
+        # Extract key phrases and dependencies
+        key_phrases = []
+        for chunk in doc.noun_chunks:
+            key_phrases.append(chunk.text)
+        
+        # Detect intent using both pattern matching and dependency parsing
+        intent_scores = defaultdict(float)
+        
+        # Pattern-based scoring
+        for intent, patterns in self.intents.items():
+            for pattern in patterns:
+                if pattern in text.lower():
+                    intent_scores[intent] += 1.0
+        
+        # Dependency-based scoring
+        for token in doc:
+            if token.dep_ in ['ROOT', 'dobj', 'nsubj']:
+                for intent, patterns in self.intents.items():
+                    if token.text.lower() in patterns:
+                        intent_scores[intent] += 0.5
+        
+        # Get the dominant intent
+        if intent_scores:
+            dominant_intent = max(intent_scores.items(), key=lambda x: x[1])
+            return {
+                'intent': dominant_intent[0],
+                'confidence': dominant_intent[1],
+                'all_intents': dict(intent_scores),
+                'key_phrases': key_phrases
+            }
+        return {'intent': 'general', 'confidence': 1.0, 'key_phrases': key_phrases}
+
+    def analyze_sentiment(self, text):
+        # Combine multiple sentiment analysis approaches
+        try:
+            # Transformer-based sentiment
+            transformer_sentiment = self.sentiment_analyzer(text)[0]
+            
+            # TextBlob sentiment
+            blob = TextBlob(text)
+            textblob_polarity = blob.sentiment.polarity
+            
+            # Combine scores
+            if transformer_sentiment['label'] == 'POSITIVE':
+                combined_score = (transformer_sentiment['score'] + max(textblob_polarity, 0)) / 2
+                label = "POSITIVE"
+            else:
+                combined_score = (transformer_sentiment['score'] + max(-textblob_polarity, 0)) / 2
+                label = "NEGATIVE"
+                
+            return {
+                'label': label,
+                'score': combined_score,
+                'subjectivity': blob.sentiment.subjectivity
+            }
+        except Exception as e:
+            return {"label": "NEUTRAL", "score": 0.5, "subjectivity": 0.5}
+
+    def analyze_emotion(self, text):
+        try:
+            # Get emotion classification from transformer
+            emotion_result = self.emotion_classifier(text)[0]
+            
+            return {
+                'label': emotion_result['label'],
+                'score': emotion_result['score'],
+                'detailed_analysis': self.get_emotional_aspects(text)
+            }
+        except Exception as e:
+            return {"label": "neutral", "score": 1.0}
+
+    def get_emotional_aspects(self, text):
+        doc = nlp(text)
+        aspects = {
+            'intensity': self._get_intensity(doc),
+            'key_emotions': self._extract_emotion_words(doc),
+            'temporal_context': self._get_temporal_context(doc),
+            'certainty': self._assess_certainty(doc)
+        }
+        return aspects
+
+    def _get_intensity(self, doc):
+        intensity_markers = ['very', 'really', 'extremely', 'so', 'totally', 'absolutely']
+        return sum(1 for token in doc if token.text.lower() in intensity_markers)
+
+    def _extract_emotion_words(self, doc):
+        emotion_words = []
+        for token in doc:
+            if token.pos_ in ['ADJ', 'VERB'] and token.text.lower() in self.emotion_classifier.model.config.id2label.values():
+                emotion_words.append(token.text)
+        return emotion_words
+
+    def _get_temporal_context(self, doc):
+        temporal_markers = {
+            'past': ['was', 'were', 'had', 'felt', 'did'],
+            'present': ['am', 'is', 'are', 'feel', 'do'],
+            'future': ['will', 'going to', 'planning', 'hope']
+        }
+        
+        context = defaultdict(int)
+        for token in doc:
+            for timeframe, markers in temporal_markers.items():
+                if token.text.lower() in markers:
+                    context[timeframe] += 1
+        return dict(context)
+
+    def _assess_certainty(self, doc):
+        certainty_markers = {
+            'high': ['definitely', 'certainly', 'absolutely', 'sure'],
+            'low': ['maybe', 'perhaps', 'might', 'possibly', 'guess']
+        }
+        
+        certainty = defaultdict(int)
+        for token in doc:
+            for level, markers in certainty_markers.items():
+                if token.text.lower() in markers:
+                    certainty[level] += 1
+        return dict(certainty)
+
 class EmotionalResponseGenerator:
     def __init__(self):
-        # Emotional response dataset
-        self.emotion_responses = {
+        self.nlp_processor = AdvancedNLPProcessor()
+        self.sentence_model = SentenceTransformer('all-MiniLM-L6-v2')
+        
+        # Load response templates
+        self.response_templates = {
             "sadness": [
                 {"text": "I understand you're going through a difficult time. Your feelings of sadness are valid.", "context": "general"},
                 {"text": "It's okay to feel sad. Would you like to talk about what's troubling you?", "context": "general"},
                 {"text": "I hear the pain in your words. Remember that it's okay to take time to process these feelings.", "context": "general"},
-                {"text": "Sadness can feel overwhelming, but you don't have to face it alone. I'm here to listen.", "context": "general"},
-                {"text": "Sometimes sadness needs to be felt fully before we can begin to heal. What do you need right now?", "context": "general"}
+                {"text": "Sadness can feel overwhelming, but you don't have to face it alone. I'm here to listen.", "context": "general"}
             ],
             "heartbreak": [
                 {"text": "Breakups can be incredibly painful. Your heart needs time to heal, and that's perfectly normal.", "context": "breakup"},
                 {"text": "I hear how much this breakup is affecting you. It's okay to grieve the relationship.", "context": "breakup"},
-                {"text": "The end of a relationship can feel like losing a part of yourself. Give yourself permission to feel these emotions.", "context": "breakup"},
-                {"text": "Heartbreak is one of the deepest pains we can experience. Your feelings are completely valid.", "context": "breakup"},
-                {"text": "It's natural to feel lost after a breakup. Would you like to talk about what you're experiencing?", "context": "breakup"}
+                {"text": "The end of a relationship can feel like losing a part of yourself. Give yourself permission to feel these emotions.", "context": "breakup"}
             ],
             "anger": [
                 {"text": "I can sense your frustration. It's okay to feel angry about this situation.", "context": "general"},
                 {"text": "Your anger is valid. Would you like to explore what's triggering these feelings?", "context": "general"},
-                {"text": "Sometimes anger can be a sign that our boundaries have been crossed. What happened?", "context": "general"},
-                {"text": "It's natural to feel angry when we're hurt. I'm here to listen without judgment.", "context": "general"}
+                {"text": "Sometimes anger can be a sign that our boundaries have been crossed. What happened?", "context": "general"}
             ],
             "anxiety": [
                 {"text": "Anxiety can feel overwhelming. Let's take it one step at a time.", "context": "general"},
                 {"text": "When anxiety hits, it's important to remember that you're not alone in this.", "context": "general"},
-                {"text": "I hear that you're feeling anxious. Would you like to talk about what's causing these feelings?", "context": "general"},
-                {"text": "Anxiety is a natural response to stress. What helps you feel grounded when these feelings arise?", "context": "general"}
+                {"text": "I hear that you're feeling anxious. Would you like to talk about what's causing these feelings?", "context": "general"}
             ],
-            "confusion": [
-                {"text": "It's okay to feel uncertain. Sometimes talking things through can help bring clarity.", "context": "general"},
-                {"text": "When we're confused, it can help to break things down into smaller pieces. What's the main thing troubling you?", "context": "general"},
-                {"text": "Feeling lost is a natural part of processing complex emotions. Would you like to explore these feelings together?", "context": "general"}
-            ],
-            "hope": [
-                {"text": "I'm glad you're feeling hopeful. What's giving you this positive outlook?", "context": "general"},
-                {"text": "Hope is a powerful emotion that can help us through difficult times. Tell me more about what's inspiring you.", "context": "general"},
-                {"text": "It's wonderful to hear that spark of hope in your words. What's changed?", "context": "general"}
+            "joy": [
+                {"text": "Your happiness is contagious! What's bringing you joy right now?", "context": "general"},
+                {"text": "It's wonderful to hear you're feeling good! Would you like to share more about what's making you happy?", "context": "general"},
+                {"text": "I'm glad you're experiencing such positive emotions! What's contributed to this happiness?", "context": "general"}
             ]
         }
-
-        # Initialize n-gram models
-        self.ngram_models = defaultdict(FreqDist)
-        self.vectorizer = TfidfVectorizer(ngram_range=(1, 3))
-        self._train_ngram_models()
-
-    def _train_ngram_models(self):
-        # Train n-gram models for each emotion
-        for emotion, responses in self.emotion_responses.items():
-            texts = [response["text"] for response in responses]
-            for text in texts:
-                tokens = word_tokenize(text.lower())
-                for n in range(1, 4):  # Use 1 to 3-grams
-                    text_ngrams = list(ngrams(tokens, n))
-                    self.ngram_models[emotion].update(text_ngrams)
-
-    def analyze_emotion_ngrams(self, text):
-        tokens = word_tokenize(text.lower())
-        text_ngrams = []
-        for n in range(1, 4):
-            text_ngrams.extend(list(ngrams(tokens, n)))
-
-        # Calculate emotion scores based on n-gram overlap
-        emotion_scores = defaultdict(float)
-        for emotion, freq_dist in self.ngram_models.items():
-            for ngram in text_ngrams:
-                emotion_scores[emotion] += freq_dist[ngram]
-
-        # Normalize scores
-        total = sum(emotion_scores.values()) or 1
-        emotion_scores = {k: v/total for k, v in emotion_scores.items()}
         
-        # Get the dominant emotion
-        dominant_emotion = max(emotion_scores.items(), key=lambda x: x[1])
-        return {
-            "label": dominant_emotion[0],
-            "score": dominant_emotion[1],
-            "all_scores": emotion_scores
-        }
+        # Create embeddings for all responses
+        self.response_embeddings = {}
+        for emotion, responses in self.response_templates.items():
+            self.response_embeddings[emotion] = {
+                'texts': [r['text'] for r in responses],
+                'embeddings': self.sentence_model.encode([r['text'] for r in responses])
+            }
 
-    def get_best_response(self, text, emotion_analysis):
-        # Get relevant responses for the detected emotion
-        emotion = emotion_analysis["label"]
-        relevant_responses = self.emotion_responses.get(emotion, [])
+    def get_best_response(self, text, analysis):
+        # Get text embedding
+        text_embedding = self.sentence_model.encode([text])[0]
+        
+        # Get emotion and intent
+        emotion = analysis['emotion']['label']
+        intent = analysis['intent']['intent']
+        
+        # Select relevant responses based on emotion and intent
+        relevant_responses = self.response_templates.get(emotion, self.response_templates['sadness'])
         
         if not relevant_responses:
             return "I'm here to listen and support you. Would you like to tell me more?"
-
-        # Create TF-IDF vectors
-        all_responses = [resp["text"] for resp in relevant_responses]
-        all_responses.append(text)
-        tfidf_matrix = self.vectorizer.fit_transform(all_responses)
         
-        # Calculate similarity between input and responses
-        user_vector = tfidf_matrix[-1]
-        response_vectors = tfidf_matrix[:-1]
-        similarities = cosine_similarity(user_vector, response_vectors)
+        # Get embeddings for relevant responses
+        response_embeddings = self.response_embeddings[emotion]['embeddings']
+        response_texts = self.response_embeddings[emotion]['texts']
+        
+        # Calculate similarities
+        similarities = cosine_similarity([text_embedding], response_embeddings)[0]
         
         # Get the most similar response
         best_response_idx = similarities.argmax()
-        return relevant_responses[best_response_idx]["text"]
+        
+        return response_texts[best_response_idx]
 
 class EmotionalSupportAssistant:
     def __init__(self):
+        self.nlp_processor = AdvancedNLPProcessor()
         self.response_generator = EmotionalResponseGenerator()
         self.activities = [
             "Take a gentle walk in nature to clear your mind",
@@ -246,25 +367,16 @@ class EmotionalSupportAssistant:
             "Create art or express yourself creatively"
         ]
 
-    def analyze_sentiment(self, text):
-        try:
-            blob = TextBlob(text)
-            polarity = blob.sentiment.polarity
-            if polarity > 0.3:
-                label = "POSITIVE"
-            elif polarity < -0.3:
-                label = "NEGATIVE"
-            else:
-                label = "NEUTRAL"
-            return {"label": label, "score": abs(polarity)}
-        except Exception as e:
-            return {"label": "NEUTRAL", "score": 0.5}
+    def analyze_input(self, text):
+        # Comprehensive analysis of user input
+        return {
+            'sentiment': self.nlp_processor.analyze_sentiment(text),
+            'emotion': self.nlp_processor.analyze_emotion(text),
+            'intent': self.nlp_processor.analyze_intent(text)
+        }
 
-    def analyze_emotion(self, text):
-        return self.response_generator.analyze_emotion_ngrams(text)
-
-    def get_response(self, text, emotion_analysis):
-        return self.response_generator.get_best_response(text, emotion_analysis)
+    def get_response(self, text, analysis):
+        return self.response_generator.get_best_response(text, analysis)
 
     def suggest_activity(self):
         return random.choice(self.activities)
@@ -336,12 +448,11 @@ def main():
         # Send button
         if st.button("Send", key=f"send_button_{st.session_state.input_key}") or (user_input and st.session_state.get('enter_pressed', False)):
             if user_input.strip():
-                # Analyze sentiment and emotion
-                sentiment = assistant.analyze_sentiment(user_input)
-                emotion = assistant.analyze_emotion(user_input)
+                # Comprehensive analysis of user input
+                analysis = assistant.analyze_input(user_input)
                 
                 # Get assistant response using the enhanced response generator
-                response = assistant.get_response(user_input, emotion)
+                response = assistant.get_response(user_input, analysis)
                 
                 # Add to chat history
                 st.session_state.chat_history.append(("user", user_input))
@@ -350,14 +461,29 @@ def main():
                 # Display analysis in a styled container
                 st.markdown('<div class="analysis-section">', unsafe_allow_html=True)
                 st.subheader("📊 Analysis")
+                
+                # Display sentiment analysis
+                sentiment = analysis['sentiment']
                 st.write(f"**Sentiment:** {sentiment['label']} (Confidence: {sentiment['score']:.2f})")
+                st.write(f"**Subjectivity:** {sentiment['subjectivity']:.2f}")
+                
+                # Display emotion analysis
+                emotion = analysis['emotion']
                 st.write(f"**Primary Emotion:** {emotion['label'].capitalize()} (Confidence: {emotion['score']:.2f})")
                 
-                # Display emotion distribution
-                if 'all_scores' in emotion:
-                    st.write("**Emotion Distribution:**")
-                    for emo, score in emotion['all_scores'].items():
-                        st.write(f"- {emo.capitalize()}: {score:.2f}")
+                # Display intent analysis
+                intent = analysis['intent']
+                st.write(f"**Detected Intent:** {intent['intent'].capitalize()} (Confidence: {intent['confidence']:.2f})")
+                
+                # Display detailed emotional aspects
+                if 'detailed_analysis' in emotion:
+                    st.write("**Emotional Analysis Details:**")
+                    details = emotion['detailed_analysis']
+                    st.write(f"- Emotional Intensity: {details['intensity']}")
+                    st.write(f"- Key Emotion Words: {', '.join(details['key_emotions']) if details['key_emotions'] else 'None detected'}")
+                    st.write(f"- Temporal Context: {details['temporal_context']}")
+                    st.write(f"- Certainty Levels: {details['certainty']}")
+                
                 st.markdown('</div>', unsafe_allow_html=True)
                 
                 # Provide support based on emotion

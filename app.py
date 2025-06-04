@@ -2,12 +2,10 @@ import streamlit as st
 import nltk
 import ssl
 from textblob import TextBlob
-from transformers import pipeline
 import pyjokes
 import random
 import emoji
 from nltk.tokenize import word_tokenize
-from sklearn.feature_extraction.text import CountVectorizer
 import numpy as np
 
 # Handle SSL certificate verification for NLTK downloads
@@ -19,19 +17,26 @@ else:
     ssl._create_default_https_context = _create_unverified_https_context
 
 # Download required NLTK data
-nltk.download('punkt', quiet=True)
-nltk.download('averaged_perceptron_tagger', quiet=True)
-nltk.download('vader_lexicon', quiet=True)
+try:
+    nltk.download('punkt', quiet=True)
+    nltk.download('averaged_perceptron_tagger', quiet=True)
+    nltk.download('vader_lexicon', quiet=True)
+except Exception as e:
+    st.warning("NLTK data download failed. Some features might be limited.")
 
-# Initialize sentiment analysis pipeline with a specific model
-sentiment_analyzer = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
-
-# Initialize emotion classifier with a specific model
-emotion_classifier = pipeline(
-    "text-classification",
-    model="j-hartmann/emotion-english-distilroberta-base",
-    return_all_scores=True
-)
+# Initialize transformers with error handling
+try:
+    from transformers import pipeline
+    sentiment_analyzer = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
+    emotion_classifier = pipeline(
+        "text-classification",
+        model="j-hartmann/emotion-english-distilroberta-base",
+        return_all_scores=True
+    )
+except Exception as e:
+    st.error("Error loading AI models. Please try again later.")
+    sentiment_analyzer = None
+    emotion_classifier = None
 
 class EmotionalSupportAssistant:
     def __init__(self):
@@ -50,16 +55,26 @@ class EmotionalSupportAssistant:
         
     def analyze_sentiment(self, text):
         try:
-            result = sentiment_analyzer(text)[0]
-            return result
+            if sentiment_analyzer:
+                result = sentiment_analyzer(text)[0]
+                return result
+            else:
+                # Fallback to TextBlob if transformer model fails
+                blob = TextBlob(text)
+                polarity = blob.sentiment.polarity
+                return {"label": "POSITIVE" if polarity > 0 else "NEGATIVE", "score": abs(polarity)}
         except Exception as e:
             return {"label": "NEUTRAL", "score": 0.5}
     
     def analyze_emotion(self, text):
         try:
-            emotions = emotion_classifier(text)[0]
-            emotions_sorted = sorted(emotions, key=lambda x: x['score'], reverse=True)
-            return emotions_sorted[0]
+            if emotion_classifier:
+                emotions = emotion_classifier(text)[0]
+                emotions_sorted = sorted(emotions, key=lambda x: x['score'], reverse=True)
+                return emotions_sorted[0]
+            else:
+                # Simple fallback emotion detection
+                return {"label": "neutral", "score": 1.0}
         except Exception as e:
             return {"label": "neutral", "score": 1.0}
     
@@ -73,13 +88,16 @@ class EmotionalSupportAssistant:
             'surprise': "Life is full of surprises! Let's process this together.",
             'neutral': "I hear you. Would you like to explore your feelings a bit more?"
         }
-        return responses.get(emotion['label'], "I'm here to listen and support you.")
+        return responses.get(emotion['label'].lower(), "I'm here to listen and support you.")
     
     def suggest_activity(self):
         return random.choice(self.activities)
     
     def tell_joke(self):
-        return pyjokes.get_joke()
+        try:
+            return pyjokes.get_joke()
+        except:
+            return "Why did the AI cross the road? To get to the other dataset! 😄"
 
 def main():
     st.set_page_config(
@@ -122,7 +140,7 @@ def main():
                 st.write(f"**Primary Emotion:** {emotion['label'].capitalize()} (Confidence: {emotion['score']:.2f})")
                 
                 # Provide support based on emotion
-                if emotion['label'] in ['sadness', 'anger', 'fear']:
+                if emotion['label'].lower() in ['sadness', 'anger', 'fear']:
                     st.write("---")
                     st.subheader("Let me help you feel better:")
                     st.info(assistant.suggest_activity())
@@ -137,4 +155,4 @@ def main():
                 st.markdown(f"**Assistant:** {message}")
 
 if __name__ == "__main__":
-    main() 
+    main()

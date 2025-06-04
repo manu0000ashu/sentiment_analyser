@@ -84,15 +84,15 @@ class EmotionalSupportAssistant:
     
     def get_response(self, emotion):
         responses = {
-            'joy': "I'm happy to see you're feeling good! Let's keep that positive energy going!",
-            'sadness': "I understand you're feeling down. Remember that it's okay to feel this way, and I'm here to help.",
-            'anger': "I can sense that you're frustrated. Let's try to work through this together.",
-            'fear': "It's natural to feel afraid sometimes. Let's talk about what's worrying you.",
-            'love': "That's wonderful! Love and connection are such important parts of life.",
-            'surprise': "Life is full of surprises! Let's process this together.",
-            'neutral': "I hear you. Would you like to explore your feelings a bit more?"
+            'joy': "I'm happy to see you're feeling good! Tell me more about what's making you happy!",
+            'sadness': "I understand you're feeling down. Would you like to talk more about what's troubling you?",
+            'anger': "I can sense that you're frustrated. What happened to make you feel this way?",
+            'fear': "It's natural to feel afraid sometimes. Can you share what's causing your concern?",
+            'love': "That's wonderful! I'd love to hear more about what's bringing love into your life!",
+            'surprise': "Life is full of surprises! What's the unexpected thing that happened?",
+            'neutral': "I'd love to hear more about that. What else is on your mind?"
         }
-        return responses.get(emotion['label'].lower(), "I'm here to listen and support you.")
+        return responses.get(emotion['label'].lower(), "Please tell me more about how you're feeling.")
     
     def suggest_activity(self):
         return random.choice(self.activities)
@@ -116,23 +116,35 @@ def main():
     # Initialize session state
     if 'chat_history' not in st.session_state:
         st.session_state.chat_history = []
+    if 'input_key' not in st.session_state:
+        st.session_state.input_key = 0
     
     assistant = EmotionalSupportAssistant()
     
     # Create two columns for better layout
     col1, col2 = st.columns([2, 1])
     
+    # Display chat history first
+    with col2:
+        st.subheader("Chat History")
+        for role, message in st.session_state.chat_history:
+            if role == "user":
+                st.markdown(f"**You:** {message}")
+            else:
+                st.markdown(f"**Assistant:** {message}")
+    
     with col1:
-        # Text input area with a unique key
+        # Text input area with a dynamic key
         user_input = st.text_area(
-            "How are you feeling today?",
-            key="user_input_area",
-            height=100
+            "Type your message here...",
+            key=f"user_input_{st.session_state.input_key}",
+            height=100,
+            help="Press Send or Ctrl+Enter to send your message"
         )
         
         # Send button
-        if st.button("Send", key="send_button"):
-            if user_input.strip():  # Check if input is not just whitespace
+        if st.button("Send", key=f"send_button_{st.session_state.input_key}") or (user_input and st.session_state.get('enter_pressed', False)):
+            if user_input.strip():
                 # Analyze sentiment and emotion
                 sentiment = assistant.analyze_sentiment(user_input)
                 emotion = assistant.analyze_emotion(user_input)
@@ -156,15 +168,18 @@ def main():
                     st.subheader("Let me help you feel better:")
                     st.info(assistant.suggest_activity())
                     st.success(f"Here's a joke to lighten the mood: {assistant.tell_joke()}")
-    
-    # Display chat history
-    with col2:
-        st.subheader("Chat History")
-        for role, message in st.session_state.chat_history:
-            if role == "user":
-                st.markdown(f"**You:** {message}")
-            else:
-                st.markdown(f"**Assistant:** {message}")
+                
+                # Increment the input key to clear the input field
+                st.session_state.input_key += 1
+                st.experimental_rerun()
+        
+        # Add a hint about continuing the conversation
+        st.markdown("""
+        💡 **Tip:** After each response, you can:
+        - Type a new message in the text box above
+        - Press 'Send' or Ctrl+Enter to continue the conversation
+        - Share more about your feelings or ask questions
+        """)
 
 if __name__ == "__main__":
     main()

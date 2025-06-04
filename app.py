@@ -8,6 +8,11 @@ import emoji
 from nltk.tokenize import word_tokenize
 import numpy as np
 import base64
+from nltk.util import ngrams
+from nltk.probability import FreqDist
+from collections import defaultdict
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 # Handle SSL certificate verification for NLTK downloads
 try:
@@ -21,6 +26,7 @@ else:
 try:
     nltk.download('punkt', quiet=True)
     nltk.download('averaged_perceptron_tagger', quiet=True)
+    nltk.download('stopwords', quiet=True)
 except Exception as e:
     st.warning("NLTK data download failed. Some features might be limited.")
 
@@ -121,8 +127,112 @@ def add_bg_from_url():
     </style>
     """, unsafe_allow_html=True)
 
+class EmotionalResponseGenerator:
+    def __init__(self):
+        # Emotional response dataset
+        self.emotion_responses = {
+            "sadness": [
+                {"text": "I understand you're going through a difficult time. Your feelings of sadness are valid.", "context": "general"},
+                {"text": "It's okay to feel sad. Would you like to talk about what's troubling you?", "context": "general"},
+                {"text": "I hear the pain in your words. Remember that it's okay to take time to process these feelings.", "context": "general"},
+                {"text": "Sadness can feel overwhelming, but you don't have to face it alone. I'm here to listen.", "context": "general"},
+                {"text": "Sometimes sadness needs to be felt fully before we can begin to heal. What do you need right now?", "context": "general"}
+            ],
+            "heartbreak": [
+                {"text": "Breakups can be incredibly painful. Your heart needs time to heal, and that's perfectly normal.", "context": "breakup"},
+                {"text": "I hear how much this breakup is affecting you. It's okay to grieve the relationship.", "context": "breakup"},
+                {"text": "The end of a relationship can feel like losing a part of yourself. Give yourself permission to feel these emotions.", "context": "breakup"},
+                {"text": "Heartbreak is one of the deepest pains we can experience. Your feelings are completely valid.", "context": "breakup"},
+                {"text": "It's natural to feel lost after a breakup. Would you like to talk about what you're experiencing?", "context": "breakup"}
+            ],
+            "anger": [
+                {"text": "I can sense your frustration. It's okay to feel angry about this situation.", "context": "general"},
+                {"text": "Your anger is valid. Would you like to explore what's triggering these feelings?", "context": "general"},
+                {"text": "Sometimes anger can be a sign that our boundaries have been crossed. What happened?", "context": "general"},
+                {"text": "It's natural to feel angry when we're hurt. I'm here to listen without judgment.", "context": "general"}
+            ],
+            "anxiety": [
+                {"text": "Anxiety can feel overwhelming. Let's take it one step at a time.", "context": "general"},
+                {"text": "When anxiety hits, it's important to remember that you're not alone in this.", "context": "general"},
+                {"text": "I hear that you're feeling anxious. Would you like to talk about what's causing these feelings?", "context": "general"},
+                {"text": "Anxiety is a natural response to stress. What helps you feel grounded when these feelings arise?", "context": "general"}
+            ],
+            "confusion": [
+                {"text": "It's okay to feel uncertain. Sometimes talking things through can help bring clarity.", "context": "general"},
+                {"text": "When we're confused, it can help to break things down into smaller pieces. What's the main thing troubling you?", "context": "general"},
+                {"text": "Feeling lost is a natural part of processing complex emotions. Would you like to explore these feelings together?", "context": "general"}
+            ],
+            "hope": [
+                {"text": "I'm glad you're feeling hopeful. What's giving you this positive outlook?", "context": "general"},
+                {"text": "Hope is a powerful emotion that can help us through difficult times. Tell me more about what's inspiring you.", "context": "general"},
+                {"text": "It's wonderful to hear that spark of hope in your words. What's changed?", "context": "general"}
+            ]
+        }
+
+        # Initialize n-gram models
+        self.ngram_models = defaultdict(FreqDist)
+        self.vectorizer = TfidfVectorizer(ngram_range=(1, 3))
+        self._train_ngram_models()
+
+    def _train_ngram_models(self):
+        # Train n-gram models for each emotion
+        for emotion, responses in self.emotion_responses.items():
+            texts = [response["text"] for response in responses]
+            for text in texts:
+                tokens = word_tokenize(text.lower())
+                for n in range(1, 4):  # Use 1 to 3-grams
+                    text_ngrams = list(ngrams(tokens, n))
+                    self.ngram_models[emotion].update(text_ngrams)
+
+    def analyze_emotion_ngrams(self, text):
+        tokens = word_tokenize(text.lower())
+        text_ngrams = []
+        for n in range(1, 4):
+            text_ngrams.extend(list(ngrams(tokens, n)))
+
+        # Calculate emotion scores based on n-gram overlap
+        emotion_scores = defaultdict(float)
+        for emotion, freq_dist in self.ngram_models.items():
+            for ngram in text_ngrams:
+                emotion_scores[emotion] += freq_dist[ngram]
+
+        # Normalize scores
+        total = sum(emotion_scores.values()) or 1
+        emotion_scores = {k: v/total for k, v in emotion_scores.items()}
+        
+        # Get the dominant emotion
+        dominant_emotion = max(emotion_scores.items(), key=lambda x: x[1])
+        return {
+            "label": dominant_emotion[0],
+            "score": dominant_emotion[1],
+            "all_scores": emotion_scores
+        }
+
+    def get_best_response(self, text, emotion_analysis):
+        # Get relevant responses for the detected emotion
+        emotion = emotion_analysis["label"]
+        relevant_responses = self.emotion_responses.get(emotion, [])
+        
+        if not relevant_responses:
+            return "I'm here to listen and support you. Would you like to tell me more?"
+
+        # Create TF-IDF vectors
+        all_responses = [resp["text"] for resp in relevant_responses]
+        all_responses.append(text)
+        tfidf_matrix = self.vectorizer.fit_transform(all_responses)
+        
+        # Calculate similarity between input and responses
+        user_vector = tfidf_matrix[-1]
+        response_vectors = tfidf_matrix[:-1]
+        similarities = cosine_similarity(user_vector, response_vectors)
+        
+        # Get the most similar response
+        best_response_idx = similarities.argmax()
+        return relevant_responses[best_response_idx]["text"]
+
 class EmotionalSupportAssistant:
     def __init__(self):
+        self.response_generator = EmotionalResponseGenerator()
         self.activities = [
             "Take a gentle walk in nature to clear your mind",
             "Listen to some soothing music that doesn't remind you of them",
@@ -135,40 +245,6 @@ class EmotionalSupportAssistant:
             "Do some light exercise to boost endorphins",
             "Create art or express yourself creatively"
         ]
-        
-        # Enhanced emotion keywords with more nuanced emotions
-        self.emotion_keywords = {
-            'joy': ['happy', 'excited', 'delighted', 'wonderful', 'great', 'awesome', 'fantastic', 'blessed', 'grateful'],
-            'sadness': ['sad', 'unhappy', 'depressed', 'down', 'miserable', 'hurt', 'disappointed', 'heartbroken', 'lonely', 'breakup', 'broke up'],
-            'anger': ['angry', 'mad', 'furious', 'irritated', 'annoyed', 'frustrated', 'upset', 'hate'],
-            'fear': ['scared', 'afraid', 'worried', 'anxious', 'nervous', 'terrified', 'uncertain', 'insecure'],
-            'love': ['love', 'loving', 'loved', 'care', 'caring', 'affection', 'miss', 'relationship'],
-            'surprise': ['surprised', 'shocked', 'amazed', 'unexpected', 'astonished'],
-            'confusion': ['confused', 'unsure', 'dont know', "don't know", 'lost', 'wondering'],
-            'heartbreak': ['breakup', 'broke up', 'ex', 'relationship ended', 'heartbroken', 'dumped']
-        }
-
-        # Context-aware response templates
-        self.response_templates = {
-            'heartbreak': [
-                "I'm so sorry you're going through a breakup. It's one of the most painful experiences, and your feelings are completely valid. Would you like to talk more about what you're feeling?",
-                "Breakups can leave us feeling lost and hurt. Remember that healing takes time, and it's okay to not be okay right now. What's the hardest part for you?",
-                "I hear how much pain you're in. Heartbreak is really tough, and you're brave for acknowledging these feelings. Would you like to share more about what happened?",
-                "It's completely normal to feel down after a breakup. Your feelings matter, and this pain won't last forever. What do you need most right now - someone to listen, or maybe some suggestions for coping?"
-            ],
-            'sadness': [
-                "I can hear the sadness in your words, and I want you to know that it's okay to feel this way. Would you like to tell me more about what's making you feel down?",
-                "When we're feeling down, sometimes it helps to talk about it. I'm here to listen without judgment. What's weighing on your mind?",
-                "I'm sorry you're feeling sad. Your feelings are valid, and you don't have to go through this alone. Would you like to explore what's causing these feelings?",
-                "It takes courage to acknowledge when we're feeling down. I'm here to support you. What do you think triggered these feelings?"
-            ],
-            'confusion': [
-                "It's okay to feel uncertain or lost sometimes. Would you like to try talking through what's on your mind? Sometimes that can help bring clarity.",
-                "When we're not sure about our feelings, it can be overwhelming. Let's take it one step at time. What's the strongest emotion you're experiencing right now?",
-                "Sometimes we need time to process our emotions, and that's perfectly normal. Would you like to explore these feelings together?",
-                "It's natural to feel confused when processing difficult emotions. I'm here to listen and help you sort through your thoughts. What's the most pressing thing on your mind?"
-            ]
-        }
 
     def analyze_sentiment(self, text):
         try:
@@ -183,61 +259,18 @@ class EmotionalSupportAssistant:
             return {"label": label, "score": abs(polarity)}
         except Exception as e:
             return {"label": "NEUTRAL", "score": 0.5}
-    
+
     def analyze_emotion(self, text):
-        try:
-            text = text.lower()
-            words = word_tokenize(text)
-            
-            # Count emotion keywords
-            emotion_scores = {emotion: 0 for emotion in self.emotion_keywords}
-            for word in words:
-                for emotion, keywords in self.emotion_keywords.items():
-                    if word in keywords:
-                        emotion_scores[emotion] += 1
-            
-            # Get the dominant emotion
-            max_emotion = max(emotion_scores.items(), key=lambda x: x[1])
-            if max_emotion[1] == 0:
-                return {"label": "neutral", "score": 1.0}
-            return {"label": max_emotion[0], "score": 1.0}
-        except Exception as e:
-            return {"label": "neutral", "score": 1.0}
-    
-    def get_response(self, emotion_analysis):
-        # Get the detected emotion
-        emotion = emotion_analysis['label'].lower()
-        
-        # Check for specific keywords in the last message
-        last_message = st.session_state.chat_history[-1][1] if st.session_state.chat_history else ""
-        last_message = last_message.lower()
-        
-        # Check for context-specific situations
-        if any(word in last_message for word in ['breakup', 'broke up', 'ex', 'relationship ended']):
-            return random.choice(self.response_templates['heartbreak'])
-        elif emotion == 'sadness' or 'sad' in last_message or 'down' in last_message:
-            return random.choice(self.response_templates['sadness'])
-        elif 'dont know' in last_message.replace("'", "") or 'confused' in last_message or 'unsure' in last_message:
-            return random.choice(self.response_templates['confusion'])
-        
-        # Default responses based on emotion
-        responses = {
-            'joy': "I'm glad you're feeling positive! What's bringing this happiness into your life?",
-            'sadness': "I hear the sadness in your words. Would you like to talk about what's troubling you?",
-            'anger': "I can sense your frustration. What happened to make you feel this way?",
-            'fear': "It's okay to feel anxious or worried. Would you like to share what's causing these feelings?",
-            'love': "Love is such a powerful emotion. Would you like to tell me more about these feelings?",
-            'surprise': "Unexpected things can really impact us. How are you processing this surprise?",
-            'neutral': "I'm here to listen. What's on your mind right now?"
-        }
-        return responses.get(emotion, "I'm here to listen and support you. Would you like to tell me more?")
-    
+        return self.response_generator.analyze_emotion_ngrams(text)
+
+    def get_response(self, text, emotion_analysis):
+        return self.response_generator.get_best_response(text, emotion_analysis)
+
     def suggest_activity(self):
         return random.choice(self.activities)
-    
+
     def tell_joke(self):
         try:
-            # Get a joke that's appropriate for someone feeling down
             jokes = [
                 "What did the grape say when it got stepped on? Nothing, it just let out a little wine!",
                 "Why don't scientists trust atoms? Because they make up everything!",
@@ -307,8 +340,8 @@ def main():
                 sentiment = assistant.analyze_sentiment(user_input)
                 emotion = assistant.analyze_emotion(user_input)
                 
-                # Get assistant response
-                response = assistant.get_response(emotion)
+                # Get assistant response using the enhanced response generator
+                response = assistant.get_response(user_input, emotion)
                 
                 # Add to chat history
                 st.session_state.chat_history.append(("user", user_input))
@@ -319,10 +352,16 @@ def main():
                 st.subheader("📊 Analysis")
                 st.write(f"**Sentiment:** {sentiment['label']} (Confidence: {sentiment['score']:.2f})")
                 st.write(f"**Primary Emotion:** {emotion['label'].capitalize()} (Confidence: {emotion['score']:.2f})")
+                
+                # Display emotion distribution
+                if 'all_scores' in emotion:
+                    st.write("**Emotion Distribution:**")
+                    for emo, score in emotion['all_scores'].items():
+                        st.write(f"- {emo.capitalize()}: {score:.2f}")
                 st.markdown('</div>', unsafe_allow_html=True)
                 
                 # Provide support based on emotion
-                if emotion['label'].lower() in ['sadness', 'anger', 'fear']:
+                if emotion['label'].lower() in ['sadness', 'heartbreak', 'anger', 'anxiety']:
                     st.markdown('<div class="analysis-section">', unsafe_allow_html=True)
                     st.subheader("🌟 Let me help you feel better:")
                     st.info(assistant.suggest_activity())
